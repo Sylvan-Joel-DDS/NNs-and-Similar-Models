@@ -1,0 +1,21 @@
+# Data & Large Artifacts
+Data/
+Models/
+*.csv
+*.parquet
+*.h5
+*.pkl
+
+# Python & Jupyter
+__pycache__/
+*.py[cod]
+*$py.class
+.ipynb_checkpoints/
+venv/
+env/
+
+# IDEs & OS Files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
