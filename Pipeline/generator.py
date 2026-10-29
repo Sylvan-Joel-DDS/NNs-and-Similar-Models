@@ -5,13 +5,16 @@ from pathlib import Path
 from . import config
 from .policy_rag import format_instructions
 
-BASE_MODEL = "google/flan-t5-base"
 DEFAULT_GEN_KWARGS = dict(max_new_tokens=256, num_beams=4, no_repeat_ngram_size=3, early_stopping=True)
 
 
 class Generator:
-    def __init__(self, path=None):
-        self.path = Path(path) if path else config.GENERATOR_DIR
+    """`base_model` defaults to config.GEN_BASE_MODEL (flan-t5-small). Each base model has its own fine-tuned folder
+    (Models/flan_t5_recycling_small, ..._base) so they never overwrite each other."""
+    def __init__(self, base_model: str | None = None, path=None):
+        self.base_model = base_model or config.GEN_BASE_MODEL
+        short = self.base_model.split("/")[-1].replace("flan-t5-", "")
+        self.path = Path(path) if path else config.MODELS_DIR / f"flan_t5_recycling_{short}"
         self.tok = self.model = None
         self._ok = None
 
@@ -29,8 +32,8 @@ class Generator:
     @property
     def signature(self) -> str:
         """Changes whenever the fine-tuned weights change -> invalidates the cached answers."""
-        files = list(self.path.glob("*.safetensors")) + list(self.path.glob("pytorch_model*.bin")) if self.path.exists() else []
-        return f"finetuned:{max(f.stat().st_mtime_ns for f in files)}" if files else f"base:{BASE_MODEL}"
+        files = (list(self.path.glob("*.safetensors")) + list(self.path.glob("pytorch_model*.bin"))) if self.path.exists() else []
+        return f"finetuned:{self.base_model}:{max(f.stat().st_mtime_ns for f in files)}" if files else f"base:{self.base_model}"
 
     @property
     def is_finetuned(self) -> bool:
@@ -39,7 +42,7 @@ class Generator:
     def load(self, force_base: bool = False):
         import torch
         from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-        src = BASE_MODEL if (force_base or not self.is_finetuned) else str(self.path)
+        src = self.base_model if (force_base or not self.is_finetuned) else str(self.path)
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.tok = AutoTokenizer.from_pretrained(src)
         self.model = AutoModelForSeq2SeqLM.from_pretrained(src).to(self.device).eval()

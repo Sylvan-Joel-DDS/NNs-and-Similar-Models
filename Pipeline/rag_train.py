@@ -1,6 +1,6 @@
 """Fine-tuning data and loop for the instruction generator (flan-t5-base)."""
 from __future__ import annotations
-import random
+import random, time
 
 import numpy as np
 import pandas as pd
@@ -30,11 +30,30 @@ def make_examples(retriever, templates, n_per_cat, seed):
     return out
 
 
-def finetune_generator(gen, train_ex, val_ex, epochs=3, lr=2e-4, batch_size=4, verbose=True):
-    """Fine-tune ALL weights. Keeps the best-validation-loss weights and saves them to Models/flan_t5_recycling."""
-    import torch
+def finetune_generator(gen, train_ex, val_ex, epochs=2, lr=None, batch_size=2, grad_accum=4, optimizer="adafactor",
+                       freeze_encoder=True, time_budget_min=None, log_every=10, verbose=True):
+    """Memory-lean fine-tuning for a laptop CPU.
+
+    * optimizer='adafactor' keeps almost no optimizer state (AdamW needs 2 extra copies of every weight)
+    * freeze_encoder=True trains only the decoder (about half the backward work and memory)
+    * batch_size x grad_accum gives the same effective batch with a fraction of the activation memory
+    * the best weights are saved to disk instead of being cloned in RAM every epoch
+    * progress is printed every `log_every` batches, and `time_budget_min` stops training cleanly
+      (keeping the best weights so far) instead of running for hours
+    """
+    import gc, torch
     from torch.utils.data import DataLoader
+    from transformers.optimization import Adafactor
     gen._ensure(); model, tok, device = gen.model, gen.tok, gen.device
+    lr = lr or (1e-3 if optimizer == "adafactor" else 3e-4)
+
+    if freeze_encoder:
+        for p in list(model.shared.parameters()) + list(model.encoder.parameters()):
+            p.requires_grad = False
+    params = [p for p in model.parameters() if p.requires_grad]
+    if verbose:
+        print(f"Training {sum(p.numel() for p in params) / 1e6:.0f}M of {sum(p.numel() for p in model.parameters()) / 1e6:.0f}M parameters "
+              f"| optimizer {optimizer} | effective batch {batch_size * grad_accum} | device {device}")
 
     def collate(batch):
         enc = tok([b["prompt"] for b in batch], max_length=512, truncation=True, padding=True, return_tensors="pt")
@@ -44,37 +63,50 @@ def finetune_generator(gen, train_ex, val_ex, epochs=3, lr=2e-4, batch_size=4, v
         return enc
 
     tr = DataLoader(train_ex, batch_size=batch_size, shuffle=True, collate_fn=collate)
-    va = DataLoader(val_ex, batch_size=8, collate_fn=collate)
-    opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
-    total = epochs * len(tr)
-    sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: max(0.05, 1 - s / total))
-    best, best_state, log = float("inf"), None, []
+    va = DataLoader(val_ex, batch_size=4, collate_fn=collate)
+    opt = (Adafactor(params, lr=lr, scale_parameter=False, relative_step=False, warmup_init=False)
+           if optimizer == "adafactor" else torch.optim.AdamW(params, lr=lr, weight_decay=0.01))
+    updates = epochs * -(-len(tr) // grad_accum)
+    sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: max(0.1, 1 - s / max(1, updates)))
+
+    t0, best, log, saved, stop = time.time(), float("inf"), [], False, False
     for ep in range(epochs):
         model.train(); losses = []
-        for b in tr:
+        for i, b in enumerate(tr):
             b = {k: v.to(device) for k, v in b.items()}
             loss = model(**b).loss
-            loss.backward(); torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            opt.step(); sched.step(); opt.zero_grad(); losses.append(loss.item())
+            (loss / grad_accum).backward(); losses.append(loss.item())
+            if (i + 1) % grad_accum == 0 or i + 1 == len(tr):
+                torch.nn.utils.clip_grad_norm_(params, 1.0)
+                opt.step(); sched.step(); opt.zero_grad(set_to_none=True)
+            if verbose and (i + 1) % log_every == 0:
+                print(f"  epoch {ep + 1}/{epochs} batch {i + 1}/{len(tr)} | loss {np.mean(losses[-log_every:]):.3f} | {time.time() - t0:.0f}s")
+            if time_budget_min and time.time() - t0 > time_budget_min * 60:
+                stop = True; print(f"  time budget of {time_budget_min} min reached - stopping."); break
         model.eval(); vl = []
         with torch.no_grad():
             for b in va:
                 vl.append(model(**{k: v.to(device) for k, v in b.items()}).loss.item())
-        log.append(dict(epoch=ep + 1, train_loss=float(np.mean(losses)), val_loss=float(np.mean(vl))))
+        log.append(dict(epoch=ep + 1, train_loss=float(np.mean(losses)), val_loss=float(np.mean(vl)), seconds=round(time.time() - t0)))
         if verbose: print(log[-1])
-        if np.mean(vl) < best:
-            best = np.mean(vl); best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
-    model.load_state_dict(best_state); model.eval()
-    config.GENERATOR_DIR.mkdir(parents=True, exist_ok=True)
-    model.save_pretrained(config.GENERATOR_DIR); tok.save_pretrained(config.GENERATOR_DIR)
-    config.write_meta(config.GENERATOR_DIR / "meta", fingerprint=config.fingerprint([e["prompt"] for e in train_ex], epochs, lr))
+        if np.mean(vl) < best or not saved:            # save to DISK (no extra copy of the weights in RAM)
+            best = float(np.mean(vl)); gen.path.mkdir(parents=True, exist_ok=True)
+            model.save_pretrained(gen.path); tok.save_pretrained(gen.path); saved = True
+        if stop:
+            break
+    del opt, sched; gc.collect()
+    config.write_meta(gen.path / "meta", fingerprint=_fp(gen, train_ex, epochs))
+    gen.load()                                         # re-load the best saved weights
     return pd.DataFrame(log)
 
 
-def generator_is_current(train_ex, epochs=3, lr=2e-4) -> bool:
-    """True if Models/flan_t5_recycling was trained on exactly this data/settings (skip re-training)."""
-    meta = config.read_meta(config.GENERATOR_DIR / "meta")
-    return meta.get("fingerprint") == config.fingerprint([e["prompt"] for e in train_ex], epochs, lr)
+def _fp(gen, train_ex, epochs):
+    return config.fingerprint([e["prompt"] for e in train_ex], epochs, gen.base_model)
+
+
+def generator_is_current(gen, train_ex, epochs=2) -> bool:
+    """True if the fine-tuned folder was trained on exactly this data / base model / epochs (skip re-training)."""
+    return gen.is_finetuned and config.read_meta(gen.path / "meta").get("fingerprint") == _fp(gen, train_ex, epochs)
 
 
 def evaluate_generator(gen, retriever, kb, gen_kwargs, label, model=None, templates=VAL_TEMPLATES):

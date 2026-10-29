@@ -2,6 +2,7 @@
 
     python -m Pipeline.run_pipeline --stage all          # images -> cnn -> text -> rag
     python -m Pipeline.run_pipeline --stage text         # one stage
+    python -m Pipeline.run_pipeline --stage lm --minutes 20   # fine-tune flan-t5-small on a laptop CPU, time-boxed
     python -m Pipeline.run_pipeline --stage cnn --full   # --full = the complete (slower) search / fine-tune schedule
     python -m Pipeline.run_pipeline --stage rag --skip-generator   # policy index + extractive cache only (no PyTorch)
 
@@ -48,6 +49,23 @@ def stage_text(args):
     print("test accuracy:", round(accuracy_score(sp["y_test"], art["model"].predict(sp["X_test"])), 4))
 
 
+def stage_lm(args):
+    """Fine-tune the generator in a separate process (keeps TensorFlow and the image arrays out of RAM)."""
+    from .policy_rag import build_knowledge_base, build_retriever
+    from .generator import Generator
+    from . import rag_train
+    kb = build_knowledge_base(); retriever, _ = build_retriever(kb)
+    gen = Generator()
+    if not gen.available:
+        print("PyTorch unavailable - skipping."); return
+    gen.load(force_base=True)
+    tr = rag_train.make_examples(retriever, rag_train.TRAIN_TEMPLATES, 20, seed=1)
+    va = rag_train.make_examples(retriever, rag_train.VAL_TEMPLATES, 4, seed=2)
+    if rag_train.generator_is_current(gen, tr, epochs=2) and not args.force:
+        print("Fine-tuned generator already current:", gen.path); return
+    print(rag_train.finetune_generator(gen, tr, va, epochs=2, time_budget_min=args.minutes))
+
+
 def stage_rag(args):
     from .policy_rag import build_knowledge_base, build_retriever, RecyclingAdvisor
     from .generator import Generator
@@ -58,13 +76,14 @@ def stage_rag(args):
     adv.warm_cache(); print("instruction cache written ->", config.INSTRUCTION_CACHE)
 
 
-STAGES = dict(images=stage_images, cnn=stage_cnn, text=stage_text, rag=stage_rag)
+STAGES = dict(images=stage_images, cnn=stage_cnn, text=stage_text, lm=stage_lm, rag=stage_rag)
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--stage", default="all", choices=["all", *STAGES])
     ap.add_argument("--force", action="store_true", help="ignore caches and rebuild")
     ap.add_argument("--full", action="store_true", help="full (slower) CNN search / fine-tune schedule")
+    ap.add_argument("--minutes", type=int, default=25, help="time budget for generator fine-tuning (lm stage)")
     ap.add_argument("--skip-generator", action="store_true", help="RAG stage without PyTorch (extractive answers only)")
     a = ap.parse_args()
     t0 = time.time()

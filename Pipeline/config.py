@@ -7,7 +7,7 @@ Layout (this file lives in <project>/Pipeline):
     Pipeline/  this package
 """
 from __future__ import annotations
-import hashlib, json
+import hashlib, json, os
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -26,7 +26,8 @@ SEED = 42
 
 CNN_FINAL = MODELS_DIR / "ecosort_cnn_final.keras"
 TEXT_MODEL = MODELS_DIR / "text_model.joblib"
-GENERATOR_DIR = MODELS_DIR / "flan_t5_recycling"
+# flan-t5-small (77M params) trains in ~2 GB of RAM on a CPU; use google/flan-t5-base (250M) only with a GPU / 16 GB+.
+GEN_BASE_MODEL = os.environ.get("ECOSORT_GEN_MODEL", "google/flan-t5-small")
 INSTRUCTION_CACHE = MODELS_DIR / "instruction_cache.json"
 
 
