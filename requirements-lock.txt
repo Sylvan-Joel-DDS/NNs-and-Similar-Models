@@ -1,0 +1,36 @@
+# EcoSort waste-management assistant - cleaned lock file
+#
+# Derived from the `pip freeze` of the environment in which the notebook ran end to end
+# (Windows, Python 3.11, CPU-only PyTorch). Only the packages this project needs are kept; the other ~150 lines
+# (Jupyter machinery, GUI libraries and packages from unrelated work) are installed automatically as dependencies
+# or are not needed, and the conda `@ file:///...` build paths were removed because they cannot be installed
+# on another machine.
+#
+# Install CPU-only PyTorch first, then everything else:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   pip install -r requirements-lock.txt
+#
+# To regenerate this file with EVERY version pinned from your live environment:
+#   python -m Pipeline.make_lock
+
+# --- pinned (versions recovered from the original freeze) ---
+numpy==2.4.6
+scikit-learn==1.9.1
+matplotlib==3.11.2
+tensorflow==2.21.0
+keras==3.15.1
+torch==2.14.1             # installed as 2.14.1+cpu; the CPU index above serves it
+transformers==5.21.0
+sentence-transformers==6.2.0
+tokenizers==0.23.3
+huggingface-hub==2.3.0
+safetensors==0.8.0
+
+# --- not pinned: conda hides the version in `pip freeze`; run `python -m Pipeline.make_lock` to pin them ---
+pandas>=2.0
+seaborn>=0.12
+pillow>=10.0
+joblib>=1.3
+ipykernel>=6.25
+jupyterlab>=4.0
+ipywidgets>=8.0

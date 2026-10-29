@@ -1,0 +1,36 @@
+# EcoSort waste-management assistant - Python dependencies
+#
+# Python 3.10 - 3.12 recommended (TensorFlow wheels are not published for every newer Python).
+#
+# Install order (recommended, especially on Windows):
+#   1) CPU-only PyTorch (small download, enough for flan-t5-small and MiniLM):
+#        pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   2) everything else:
+#        pip install -r requirements.txt
+#
+# Versions are lower bounds, not pins. To record the exact versions of a working environment run:
+#        pip freeze > requirements-lock.txt
+
+# --- core data / ML ---
+numpy>=1.26
+pandas>=2.0
+scikit-learn>=1.3
+joblib>=1.3
+
+# --- plotting / images ---
+matplotlib>=3.7
+seaborn>=0.12
+pillow>=10.0
+
+# --- Part 2: image classification (CNN) ---
+tensorflow>=2.16          # Keras 3: models are saved in the .keras format
+
+# --- Parts 3-4: embeddings, retrieval and instruction generation ---
+torch>=2.1                # CPU build is sufficient (see install order above)
+transformers>=4.40        # google/flan-t5-small (fine-tuned) generator
+sentence-transformers>=2.7  # all-MiniLM-L6-v2 embeddings (optional: a TF-IDF fallback is used if unavailable)
+
+# --- notebook ---
+ipykernel>=6.25
+jupyterlab>=4.0
+ipywidgets>=8.0           # optional: renders model-download progress bars

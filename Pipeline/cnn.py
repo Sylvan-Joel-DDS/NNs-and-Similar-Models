@@ -156,7 +156,7 @@ def head_search(feats, space, epochs=25, verbose=True, use_cache=True) -> tuple[
         df = pd.DataFrame(rows).sort_values("val_loss").reset_index(drop=True)
         df.to_json(path)
     df = df.sort_values("val_loss").reset_index(drop=True)
-    best = {k: (int(df.loc[0, k]) if k == "units" else float(df.loc[0, k])) for k in ("units", "dropout", "l2", "lr")}
+    best = {k: (int(df.loc[0, k]) if k == "units" else round(float(df.loc[0, k]), 6)) for k in ("units", "dropout", "l2", "lr")}
     return df, best
 
 

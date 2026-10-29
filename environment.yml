@@ -1,0 +1,17 @@
+# Conda environment for the EcoSort waste-management assistant.
+#
+#   conda env create -f environment.yml      (run from the project root, next to requirements.txt)
+#   conda activate ecosort
+#
+# Conda only provides Python and pip; every package comes from requirements.txt so that pip's resolver picks
+# NumPy / TensorFlow / PyTorch versions that work together (mixing conda and pip builds of NumPy is a common
+# source of breakage). The extra index below serves the small CPU-only PyTorch build.
+name: ecosort
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cpu
+      - -r requirements.txt
